@@ -1,0 +1,163 @@
+<!DOCTYPE html><html lang="zh-CN"><head><meta http-equiv="content-type" content="text/html; charset=utf-8"><meta content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=0" name="viewport"><meta content="yes" name="apple-mobile-web-app-capable"><meta content="black-translucent" name="apple-mobile-web-app-status-bar-style"><meta content="telephone=no" name="format-detection"><meta name="description"><title>Zookeeper server 入门 | Rudy Steiner's Blog</title><link rel="stylesheet" type="text/css" href="/css/style.css?v=0.0.0"><link rel="stylesheet" type="text/css" href="//cdn.bootcss.com/normalize/8.0.0/normalize.min.css"><link rel="stylesheet" type="text/css" href="//cdn.bootcss.com/pure/1.0.0/pure-min.css"><link rel="stylesheet" type="text/css" href="//cdn.bootcss.com/pure/1.0.0/grids-responsive-min.css"><link rel="stylesheet" href="//cdn.bootcss.com/font-awesome/4.7.0/css/font-awesome.min.css"><script type="text/javascript" src="//cdn.bootcss.com/jquery/3.3.1/jquery.min.js"></script><link rel="Shortcut Icon" type="image/x-icon" href="/favicon.ico"><link rel="apple-touch-icon" href="/apple-touch-icon.png"><link rel="apple-touch-icon-precomposed" href="/apple-touch-icon.png"><meta name="generator" content="Hexo 4.2.1"></head><body><div class="body_container"><div id="header"><div class="site-name"><h1 class="hidden">Zookeeper server 入门</h1><a id="logo" href="/.">Rudy Steiner's Blog</a><p class="description"></p></div><div id="nav-menu"><a class="current" href="/."><i class="fa fa-home"> 首页</i></a><a href="/archives/"><i class="fa fa-archive"> 归档</i></a><a href="/about/"><i class="fa fa-user"> 关于</i></a><a href="/atom.xml"><i class="fa fa-rss"> 订阅</i></a></div></div><div class="pure-g" id="layout"><div class="pure-u-1 pure-u-md-3-4"><div class="content_container"><div class="post"><h1 class="post-title">Zookeeper server 入门</h1><div class="post-meta">Oct 27, 2019</div><div class="clear"><div class="toc-article" id="toc"><div class="toc-title">文章目录</div><ol class="toc"><li class="toc-item toc-level-2"><a class="toc-link" href="#ZK集群模式（QuorumPeerMain）"><span class="toc-number">1.</span> <span class="toc-text">ZK集群模式（QuorumPeerMain）</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#配置解析"><span class="toc-number">1.1.</span> <span class="toc-text">配置解析</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#节点启动"><span class="toc-number">1.2.</span> <span class="toc-text">节点启动</span></a></li></ol></li><li class="toc-item toc-level-2"><a class="toc-link" href="#Leader选举"><span class="toc-number">2.</span> <span class="toc-text">Leader选举</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#崩溃恢复-数据同步"><span class="toc-number">3.</span> <span class="toc-text">崩溃恢复(数据同步)</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#Leader的lead方法"><span class="toc-number">3.1.</span> <span class="toc-text">Leader的lead方法</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#Follower的followerLeader方法"><span class="toc-number">3.2.</span> <span class="toc-text">Follower的followerLeader方法</span></a></li></ol></li><li class="toc-item toc-level-2"><a class="toc-link" href="#原子广播"><span class="toc-number">4.</span> <span class="toc-text">原子广播</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#LeaderZookeeperServer响应"><span class="toc-number">4.1.</span> <span class="toc-text">LeaderZookeeperServer响应</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#FollowerZookeeperServer响应"><span class="toc-number">4.2.</span> <span class="toc-text">FollowerZookeeperServer响应</span></a></li></ol></li><li class="toc-item toc-level-2"><a class="toc-link" href="#Q-amp-A"><span class="toc-number">5.</span> <span class="toc-text">Q&amp;A</span></a></li></ol></div></div><div class="post-content"><p>Zookeeper 是一个容错的分布式协调服务通常用于维护配置信息、服务发现、Leader选举等场景。采用ZAB(Zookeeper atomic broadcast)共识算法使得服务集群高可用,例如一个5节点的服务集群最多可以允许2个节点不可用(宕机、网络隔离)，集群仍能对外提供服务。<br>ZAB协议主要有四个阶段(ZabState)：ELECTION &gt; DISCOVERY &gt; SYNCHRONIZATION &gt; BROADCAST。Zookeeper实际使用三阶段:Fast Leader Election &gt; Recovery &gt; Broadcast,集群节点有四种状态(ServerState)：</p>
+<ul>
+<li>LOOKING(初始状态)</li>
+<li>FOLLOWING(follower）</li>
+<li>LEADING(leader)</li>
+<li>OBSERVING(observer)</li>
+</ul>
+<p>理解zookeeper的实现主可以顺着集群中节点角色及协议状态的转化过程,梳理出大致脉络。Zookeeper有单例和集群两种模式,本文基于3.5.5版本源码，从实现的角度介绍Zookeeper集群模式的程序入口、选举、崩溃恢复、广播等内容。</p>
+<h2 id="ZK集群模式（QuorumPeerMain）"><a href="#ZK集群模式（QuorumPeerMain）" class="headerlink" title="ZK集群模式（QuorumPeerMain）"></a>ZK集群模式（QuorumPeerMain）</h2><p>Zookeeper集群模式的入口类是QuorumPeerMain,主要完成两件事:配置解析及节点初始化并启动(QuorumPeer)。梳理配置解析对理解Zookeeper的整体实现有很大的帮助,比如Zookeeper使用了哪几类端口,作用分别是什么？</p>
+<h3 id="配置解析"><a href="#配置解析" class="headerlink" title="配置解析"></a>配置解析</h3><p>配置类QuorumPeerConfig里的配置项主要包含：</p>
+<ul>
+<li>节点ID: sid</li>
+<li><p>集群节点的IP及开放的端口(QuorumServer)</p>
+<pre><code>配置文件中相关的配置，解析类(QuorumMaj)如下
+<figure class="highlight plain"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line">clientPort&#x3D;2181</span><br><span class="line">server.1&#x3D;hostname1:2888:3888</span><br><span class="line">server.2&#x3D;hostname2:2888:3888</span><br><span class="line">server.3&#x3D;hostname3:2888:3888</span><br><span class="line">server.4&#x3D;hostname4:2888:3888:observer</span><br></pre></td></tr></table></figure>
+从QuorumMaj 中可以看出：
+
+- 2181 监听客户端请求
+- 2888 集群内部通信（复制）
+- 3888 集群内部选举
+- observer 节点4是观察者，默认为PARTICIPANT（leader or follower）
+</code></pre></li>
+<li><p>日志存储路径：dataDir、dataLogDir</p>
+</li>
+</ul>
+<h3 id="节点启动"><a href="#节点启动" class="headerlink" title="节点启动"></a>节点启动</h3><p>节点(QuorumPeer)启动主要完成三件事：</p>
+<ul>
+<li>加载数据(loadDatabase)</li>
+<li><p>监听客户端连接,客户端请求的路径：</p>
+<ul>
+<li>ServerCnxnFactory 有两个实现类：NIOServerCnxnFactory、NIOServerCnxnFactory，<br>处理网络连接(AcceptThread)、网络IO事件(SelectionThread)、读取连接数据（IOWorkRequest、NIOServerCnxn）</li>
+<li>ZookeeperServer解析连接(processConnectRequest）和处理请求（processPacket）并submitRquest到处理链(Processor chain)</li>
+</ul>
+</li>
+<li><p>开始选举<br>QuorumPeer里startLeaderElection方法，根据electionAlgorithm 配置创建选举实例,默认采用FastLeaderElection</p>
+</li>
+</ul>
+<h2 id="Leader选举"><a href="#Leader选举" class="headerlink" title="Leader选举"></a>Leader选举</h2><p>Zookeeper的Leader选举是基于ZAB算法，一种Quorum（多数派）算法，典型的Quorum算法，如Paxos、Raft。<br>高可用一致性服务的设计大多采用多副本来保证可用性。对于写请求，要在超过一般的节点写入成功才算成功,只要不超过半数的节点宕机都能保障集群可用。半数保证了集群中至少有一个节点拥有所有写入的最新数据，这保证了数据的可靠性。在Leader故障的情况下，Folllower会发起新的选举，可用节点中至少有一个节点保存了所有的数据，通过一定的比较，选举拥有全部数据的节点作为Leader可以使新Leader的数据同步简化和减少耗时。<br>ZAB 算法的详细解释不是本文的重点，但只有理解了ZAB算法，才能更好的阅读Zookeeper源码，算法请参考。FastLeaderElection类的入口是lookForLeader方法，QuorumPeer初始状态为LOOKING并开始选举。<br>选举流程主要包含如下步骤：</p>
+<ol>
+<li><p>向所有的Peer(包括自己)广播消息(ToSend),也即投票，投票就是将自己的Proposal广播，这也是<strong><em>原子广播</em></strong>的由来。Proposal包含如下内容:</p>
+<pre><code>- 本节点sid
+- 本节点最大的Propse(提议)的id
+- 逻辑时钟（logicalclock），选举计数器
+- 节点选举状态(初始值LOOKING)
+- Proposal的任期(Epoch),每个任期内的Leader对应唯一值
+- 验证配置QuorumVerifier
+</code></pre><p> 每个Peer有两个收发消息的线程：WokerSender、WokerReceiver。其中Epoch非常重要,发生变化时会持久化到文件中，每次恢复从文件读取。</p>
+</li>
+<li><p>收集选票，满足条件成为Leader或者Follower,没有足够的选票继续步骤1<br>Peer根据收到的Notification的epoch和self.logicalclock的大小关系来更新Proposal:</p>
+<ol>
+<li>electionEpoch = self.logicalclock 则直接比较(sid,zxid,peerEpoch) 三元组</li>
+<li>electionEpoch &lt; self.logicalclock 忽略Notification</li>
+<li>electionEpoch &gt; self.logicalclock 更新本节点logicalclock,再比较(sid,zxid,peerEpoch) 三元组</li>
+</ol>
+<p>将收到的Notification加入选票统计，Peer Proposal一旦有更新，则广播自己的Proposal。判断选票是否达到了大多数，是则根据选举结果改变节点状态（LEADING or FOLLOWING），lookForLeader结束。</p>
+</li>
+</ol>
+<h2 id="崩溃恢复-数据同步"><a href="#崩溃恢复-数据同步" class="headerlink" title="崩溃恢复(数据同步)"></a>崩溃恢复(数据同步)</h2><p>崩溃恢复主要关注Leader是如何处理各种异常情况下，数据的同步。数据同步的目的是为了保证副本状态的一致性，必须满足两个性质：</p>
+<ul>
+<li>在任意副本上已提交的事务(lastProcessZxid)也必须在其余副本提交，通过SNAP和DIFF完成</li>
+<li>没有提交的事务应当被废除，保证没有节点提交该事务，通过TRUNC来完成</li>
+</ul>
+<p>可能的异常情况：</p>
+<ol>
+<li>Leader在将事务已写入Commit log，未向Follower发起Proposal前宕机，新Leader会废除该事务</li>
+<li>Leader向Follower发起事务Proposal后宕机，但未commit宕机，新Leader会废除该事务</li>
+<li>Proposal commit后宕机，并且至少有一个follower成功commit，新Leader会保证提交该事务</li>
+</ol>
+<p>关键字段:</p>
+<ul>
+<li>acceptedEpoch: the epoch number of the last NEWEPOCH message accepted</li>
+<li>currentEpoch: the epoch number of the last NEWLEADER message accepted</li>
+<li>lastProcessedZxid</li>
+</ul>
+<p>一旦某个Peer获得足够的选票，会变成LEADING状态，此时集群节点很快达成共识，其余节点变成FOLLOWING状态。</p>
+<h3 id="Leader的lead方法"><a href="#Leader的lead方法" class="headerlink" title="Leader的lead方法"></a>Leader的lead方法</h3><ul>
+<li><p>重置tick,并加载zookeeper数据：ZKDataBase.loadDataBase</p>
+<ul>
+<li>SnapShot</li>
+<li>DataTree</li>
+<li>DataNode</li>
+<li>nodes</li>
+<li>FileTxnSnapLog {<br>  txnlog(log.zxid),<br>  snaplog(snapshot.zxid),<br>  committedLog,<br>  save(lastProcessedZxid)<br>}</li>
+<li>Snapshot Thread</li>
+<li>fastForwardFromEdits</li>
+</ul>
+</li>
+<li><p>开启Leader连接处理线程，涉及类LearnerHandler处理follower请求/响应，方法syncFollower处理SNAP/DIFF/TRUNC。有四种情况：</p>
+<ul>
+<li>peerLastZxid &gt; maxCommitedLog: 直接TRUNC</li>
+<li>minCommitedLog &lt;peerLastZxid&lt; maxCommitedLog: 利用内存中commited Proposals，DIFF同步或 TRUNC然后，DIFF同步</li>
+<li>peerLastZxid &lt; minCommitedLog: 利用事务日志加内存中commited Proposals，DIFF同步或 TRUNC然后，DIFF同步</li>
+<li>利用SNAP同步</li>
+</ul>
+</li>
+</ul>
+<h3 id="Follower的followerLeader方法"><a href="#Follower的followerLeader方法" class="headerlink" title="Follower的followerLeader方法"></a>Follower的followerLeader方法</h3><p>主要处理逻辑在三个方法中：</p>
+<ul>
+<li>syncWithLeader：崩溃恢复后与Leader同步数据</li>
+<li>read 和 process packet：原子广播阶段处理Leader事务proposal  </li>
+</ul>
+<h2 id="原子广播"><a href="#原子广播" class="headerlink" title="原子广播"></a>原子广播</h2><p>事务请求采用Two-phased Commit，Zookeeper的写请求都会在Leader上以事务的方式提交，follower收到写请求会转发给Leader。</p>
+<h3 id="LeaderZookeeperServer响应"><a href="#LeaderZookeeperServer响应" class="headerlink" title="LeaderZookeeperServer响应"></a>LeaderZookeeperServer响应</h3><p>  采用一系列Processor</p>
+<ol>
+<li>LeaderRequesetProcessor</li>
+<li>RrepRequestProcessor: 分配zxid</li>
+<li><p>ProposalRequestProcessor: 发起事务Proposal</p>
+<ul>
+<li>SyncProcessorProcessor 写事务日志、批量提交事务日志、生成快照日志<br>事务日志commit时机：</li>
+<li>AckRequestProcessor：事务日志persistent后，mock leader vote the proposal</li>
+</ul>
+<p>等待follower ack 达到多数之后操作如下：</p>
+<ul>
+<li>toBeApplied:将事务请求添加到toBeApplied队列（已达成大多数，但还未实际执行事务操作）</li>
+<li>发送Leader.COMMIT给所有的Followers</li>
+<li>并通知observer</li>
+</ul>
+</li>
+<li>CommitProcessor<ul>
+<li>非事务的request直接next processor</li>
+<li>事务操作，提交最早的事务</li>
+</ul>
+</li>
+<li>ToBeAppliedRequestProcessor</li>
+<li>FinalRequestProcessor<ul>
+<li>processTxn: apply to dataTree</li>
+<li>addCommittedProposal</li>
+<li>响应客户端的请求</li>
+</ul>
+</li>
+</ol>
+<h3 id="FollowerZookeeperServer响应"><a href="#FollowerZookeeperServer响应" class="headerlink" title="FollowerZookeeperServer响应"></a>FollowerZookeeperServer响应</h3><p> 采用一系列Processor:</p>
+<ol>
+<li>FollowerRequestProcessor</li>
+<li>CommitProcessor</li>
+<li>FinalRequestProcessor 专门用于处理Leader的事务日志请求</li>
+<li>SyncRequestProcessor</li>
+<li>SendAckRequestProcessor</li>
+</ol>
+<h2 id="Q-amp-A"><a href="#Q-amp-A" class="headerlink" title="Q&amp;A"></a>Q&amp;A</h2><ol>
+<li>Zookeeper 是如何区分未提交的事务呢？<br>在Leader写入事务（zxid）日志，在向follower发起Proposal前宕机，正常的followers选出新leader。旧Leader节点恢复之后，发起数据同步，新Leader会发现不包含follower上的lastProcessZxid，Leader会向follower发送TRUNC。</li>
+<li>ZAB 和Paxos的异同？<br><a href="https://cwiki.apache.org/confluence/display/ZOOKEEPER/Zab+vs.+Paxos" target="_blank" rel="noopener">https://cwiki.apache.org/confluence/display/ZOOKEEPER/Zab+vs.+Paxos</a><ul>
+<li>quorum</li>
+<li>leader proposal</li>
+<li>Proposal epoche</li>
+<li>Zab主要针对主-备系统设计</li>
+<li>Paxos为状态机复制而设计</li>
+</ul>
+</li>
+<li><p>ZAB 和 Raft 异同？</p>
+<ul>
+<li>Strong Leader</li>
+<li>新Leader不需要是有最新数据的节点</li>
+</ul>
+</li>
+<li><p>相关论文</p>
+<ul>
+<li>ZooKeeper’s atomic broadcast protocol: Theory and practice</li>
+<li>Zab: High-performance broadcast for primary-backup systems</li>
+</ul>
+</li>
+</ol>
+</div><div class="tags"><a href="/tags/ZAB/">ZAB</a><a href="/tags/zookeeper/">zookeeper</a></div><div class="post-nav"><a class="pre" href="/2019/12/04/raft/">Raft 算法及实现</a><a class="next" href="/2019/10/13/Distributed-system/">Distributed System Basics</a></div></div></div></div><div class="pure-u-1-4 hidden_mid_and_down"><div id="sidebar"><div class="widget"><form class="search-form" action="//www.google.com/search" method="get" accept-charset="utf-8" target="_blank"><input type="text" name="q" maxlength="20" placeholder="Search"/><input type="hidden" name="sitesearch" value="https://rudy2steiner.github.io"/></form></div><div class="widget"><div class="widget-title"><i class="fa fa-folder-o"> 分类</i></div></div><div class="widget"><div class="widget-title"><i class="fa fa-star-o"> 标签</i></div><div class="tagcloud"><a href="/tags/%E7%BA%BF%E7%A8%8B/" style="font-size: 15px;">线程</a> <a href="/tags/CPU-Load/" style="font-size: 15px;">CPU Load</a> <a href="/tags/%E5%B9%B4%E7%BB%88%E6%80%BB%E7%BB%93%EF%BC%8C%E8%B6%8B%E5%8A%BF/" style="font-size: 15px;">年终总结，趋势</a> <a href="/tags/Distributed-theory/" style="font-size: 15px;">Distributed theory</a> <a href="/tags/CAP%E5%AE%9A%E7%90%86/" style="font-size: 15px;">CAP定理</a> <a href="/tags/JVM/" style="font-size: 15px;">JVM</a> <a href="/tags/%E7%B1%BB%E5%8A%A0%E8%BD%BD/" style="font-size: 15px;">类加载</a> <a href="/tags/linux/" style="font-size: 15px;">linux</a> <a href="/tags/filesystem/" style="font-size: 15px;">filesystem</a> <a href="/tags/%E5%8D%9A%E5%AE%A2%E7%BF%BB%E8%AF%91/" style="font-size: 15px;">博客翻译</a> <a href="/tags/K8s/" style="font-size: 15px;">K8s</a> <a href="/tags/%E7%BF%BB%E8%AF%91/" style="font-size: 15px;">翻译</a> <a href="/tags/JDK/" style="font-size: 15px;">JDK</a> <a href="/tags/Kafka/" style="font-size: 15px;">Kafka</a> <a href="/tags/MQ/" style="font-size: 15px;">MQ</a> <a href="/tags/XA/" style="font-size: 15px;">XA</a> <a href="/tags/ZAB/" style="font-size: 15px;">ZAB</a> <a href="/tags/zookeeper/" style="font-size: 15px;">zookeeper</a></div></div><div class="widget"><div class="widget-title"><i class="fa fa-file-o"> 最近文章</i></div><ul class="post-list"><li class="post-list-item"><a class="post-list-link" href="/2021/01/01/2020/">2020 年终总结</a></li><li class="post-list-item"><a class="post-list-link" href="/2020/06/20/how-contribute-kubernetes/">如果你有全职工作，如何为Kubernetes做贡献</a></li><li class="post-list-item"><a class="post-list-link" href="/2020/05/26/busy-thread/">CPU高负载</a></li><li class="post-list-item"><a class="post-list-link" href="/2020/02/09/kafka/">Kafka server 入门</a></li><li class="post-list-item"><a class="post-list-link" href="/2019/12/04/raft/">Raft 算法及实现</a></li><li class="post-list-item"><a class="post-list-link" href="/2019/10/27/zookeeper-starter/">Zookeeper server 入门</a></li><li class="post-list-item"><a class="post-list-link" href="/2019/10/13/Distributed-system/">Distributed System Basics</a></li><li class="post-list-item"><a class="post-list-link" href="/2019/08/09/jdk-update/">JDK 7、8及9中虚拟机的变化</a></li><li class="post-list-item"><a class="post-list-link" href="/2019/05/28/JVM-init/">从Hotspot对象实例化过程，理解类加载</a></li><li class="post-list-item"><a class="post-list-link" href="/2019/03/18/transaction/">Distributed transaction</a></li></ul></div><div class="widget"><div class="widget-title"><i class="fa fa-external-link"> 友情链接</i></div><ul></ul><a href="http://www.example1.com/" title="site-name1" target="_blank">site-name1</a><ul></ul><a href="http://www.example2.com/" title="site-name2" target="_blank">site-name2</a><ul></ul><a href="http://www.example3.com/" title="site-name3" target="_blank">site-name3</a></div></div></div><div class="pure-u-1 pure-u-md-3-4"><div id="footer">Copyright © 2021 <a href="/." rel="nofollow">Rudy Steiner's Blog.</a> Powered by<a rel="nofollow" target="_blank" href="https://hexo.io"> Hexo.</a><a rel="nofollow" target="_blank" href="https://github.com/tufu9441/maupassant-hexo"> Theme</a> by<a rel="nofollow" target="_blank" href="https://github.com/pagecho"> Cho.</a></div></div></div><a class="show" id="rocket" href="#top"></a><script type="text/javascript" src="/js/totop.js?v=0.0.0" async></script><script type="text/javascript" src="//cdn.bootcss.com/fancybox/3.3.5/jquery.fancybox.min.js" async></script><script type="text/javascript" src="/js/fancybox.js?v=0.0.0" async></script><link rel="stylesheet" type="text/css" href="//cdn.bootcss.com/fancybox/3.3.5/jquery.fancybox.min.css"><script type="text/javascript" src="/js/codeblock-resizer.js?v=0.0.0"></script><script type="text/javascript" src="/js/smartresize.js?v=0.0.0"></script></div></body></html>

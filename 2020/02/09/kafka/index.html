@@ -1,0 +1,393 @@
+<!DOCTYPE html><html lang="zh-CN"><head><meta http-equiv="content-type" content="text/html; charset=utf-8"><meta content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=0" name="viewport"><meta content="yes" name="apple-mobile-web-app-capable"><meta content="black-translucent" name="apple-mobile-web-app-status-bar-style"><meta content="telephone=no" name="format-detection"><meta name="description"><title>Kafka server 入门 | Rudy Steiner's Blog</title><link rel="stylesheet" type="text/css" href="/css/style.css?v=0.0.0"><link rel="stylesheet" type="text/css" href="//cdn.bootcss.com/normalize/8.0.0/normalize.min.css"><link rel="stylesheet" type="text/css" href="//cdn.bootcss.com/pure/1.0.0/pure-min.css"><link rel="stylesheet" type="text/css" href="//cdn.bootcss.com/pure/1.0.0/grids-responsive-min.css"><link rel="stylesheet" href="//cdn.bootcss.com/font-awesome/4.7.0/css/font-awesome.min.css"><script type="text/javascript" src="//cdn.bootcss.com/jquery/3.3.1/jquery.min.js"></script><link rel="Shortcut Icon" type="image/x-icon" href="/favicon.ico"><link rel="apple-touch-icon" href="/apple-touch-icon.png"><link rel="apple-touch-icon-precomposed" href="/apple-touch-icon.png"><meta name="generator" content="Hexo 4.2.1"></head><body><div class="body_container"><div id="header"><div class="site-name"><h1 class="hidden">Kafka server 入门</h1><a id="logo" href="/.">Rudy Steiner's Blog</a><p class="description"></p></div><div id="nav-menu"><a class="current" href="/."><i class="fa fa-home"> 首页</i></a><a href="/archives/"><i class="fa fa-archive"> 归档</i></a><a href="/about/"><i class="fa fa-user"> 关于</i></a><a href="/atom.xml"><i class="fa fa-rss"> 订阅</i></a></div></div><div class="pure-g" id="layout"><div class="pure-u-1 pure-u-md-3-4"><div class="content_container"><div class="post"><h1 class="post-title">Kafka server 入门</h1><div class="post-meta">Feb 9, 2020</div><div class="clear"><div class="toc-article" id="toc"><div class="toc-title">文章目录</div><ol class="toc"><li class="toc-item toc-level-2"><a class="toc-link" href="#特性"><span class="toc-number">1.</span> <span class="toc-text">特性</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#Kafka-server"><span class="toc-number">2.</span> <span class="toc-text">Kafka server</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#Kafka-produce"><span class="toc-number">3.</span> <span class="toc-text">Kafka produce</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#Kafka-consume"><span class="toc-number">4.</span> <span class="toc-text">Kafka consume</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#Kafka-Log-Index存储设计"><span class="toc-number">5.</span> <span class="toc-text">Kafka Log&#x2F;Index存储设计</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#Kafka-Metadata设计"><span class="toc-number">6.</span> <span class="toc-text">Kafka Metadata设计</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#Kafka选举"><span class="toc-number">7.</span> <span class="toc-text">Kafka选举</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#Kafka-Controller-选举"><span class="toc-number">7.1.</span> <span class="toc-text">Kafka Controller 选举</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#Kafka-partition-选举"><span class="toc-number">7.2.</span> <span class="toc-text">Kafka partition 选举</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#Kafka-消费协调"><span class="toc-number">7.3.</span> <span class="toc-text">Kafka 消费协调</span></a></li></ol></li><li class="toc-item toc-level-2"><a class="toc-link" href="#Kafka-network"><span class="toc-number">8.</span> <span class="toc-text">Kafka network</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#高级特性"><span class="toc-number">9.</span> <span class="toc-text">高级特性</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#Kafka-限流机制"><span class="toc-number">10.</span> <span class="toc-text">Kafka 限流机制</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#Q-amp-A-思考"><span class="toc-number">11.</span> <span class="toc-text">Q&amp;A 思考</span></a></li></ol></div></div><div class="post-content"><p>Kafka在大数据、流式计算领域得到了广泛的应用，作为一个非常成熟的MQ产品，其中有许多值得学习借鉴的地方，本篇作为梳理Kafka设计和实现的提纲式文章，记录了梳理代码过程中的关键点及一些思考。</p>
+<h2 id="特性"><a href="#特性" class="headerlink" title="特性"></a>特性</h2><ul>
+<li>流式数据存储、发布/订阅消息系统</li>
+<li>Kafka Qos level<ol>
+<li>acks=0, 无ack</li>
+<li>acks=1, leader可靠</li>
+<li>acks=-1, ack all</li>
+</ol>
+</li>
+<li><strong>exactly once</strong></li>
+<li><strong>transaction</strong></li>
+</ul>
+<h2 id="Kafka-server"><a href="#Kafka-server" class="headerlink" title="Kafka server"></a>Kafka server</h2><ul>
+<li>KafkaServer 启动类</li>
+<li>KafkaApis 请求处理的入口</li>
+<li><p>关键的类设计</p>
+<ul>
+<li>ReplicaManager</li>
+<li>Partition<figure class="highlight plain"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">&#123;</span><br><span class="line">   allReplicasMap,&#x2F;&#x2F; follower复制状态</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure></li>
+<li>Log/LogSegment</li>
+<li><p>OffsetIndex:</p>
+<figure class="highlight plain"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">(largestOffset,physicalPosition)</span><br></pre></td></tr></table></figure></li>
+<li>Replica<figure class="highlight plain"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line">&#123;</span><br><span class="line">   hightWatermarkMetadata(HW),</span><br><span class="line">   logEndOffsetMetadata(LEO)</span><br><span class="line"> &#125;</span><br></pre></td></tr></table></figure></li>
+<li>KafkaController</li>
+<li>ControllerContext<figure class="highlight plain"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br></pre></td><td class="code"><pre><span class="line">&#123;</span><br><span class="line">    shuttingDownBrokerIds,</span><br><span class="line">    epoch, &#x2F;&#x2F; contoller epoch</span><br><span class="line">    allTopics, &#x2F;&#x2F; all topics</span><br><span class="line">    partitionReplicaAssignmentUnderlying, &#x2F;&#x2F; topic-&gt;partition-&gt;replicaspartition分配的replica元数据</span><br><span class="line">    partitionLeadershipInfo，&#x2F;&#x2F; leaderIsrAndControllerEpoch</span><br><span class="line">    partitionsBeingReassigned, &#x2F;&#x2F; reassigning partition</span><br><span class="line">    liveBrokersUnderlying, &#x2F;&#x2F; live Brokers</span><br><span class="line">    liveBrokerIdAndEpochsUnderlying, &#x2F;&#x2F;live broker,epoch</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure></li>
+<li>Broker</li>
+<li>PartitionState<figure class="highlight plain"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br></pre></td><td class="code"><pre><span class="line">&#123;</span><br><span class="line">   controllerEpoch,</span><br><span class="line">   leader,</span><br><span class="line">   leaderEpoch,</span><br><span class="line">   isr,</span><br><span class="line">   zkVersion,</span><br><span class="line">   replicas,</span><br><span class="line">   *isNew*</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure></li>
+<li>TopicMetadata</li>
+<li>PartitionMetadata<figure class="highlight plain"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br></pre></td><td class="code"><pre><span class="line">&#123;</span><br><span class="line">   partition,</span><br><span class="line">   leader,</span><br><span class="line">   leaderEpoch,</span><br><span class="line">   replicas,</span><br><span class="line">   isr,</span><br><span class="line">   offlineReplicas</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure></li>
+<li>ReplicaStateMachine<ul>
+<li>electLeaderForPartitions:<strong>partition leader election</strong></li>
+<li>PartitionLeaderElectionAlgorithms<ul>
+<li>uncleanLeaderElectionEnabled</li>
+<li>live &amp;&amp; isr</li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+<h2 id="Kafka-produce"><a href="#Kafka-produce" class="headerlink" title="Kafka produce"></a>Kafka produce</h2><ul>
+<li>关键配置：<ul>
+<li>client.id</li>
+</ul>
+</li>
+<li>ReplicaManager 生产消息的流程<ul>
+<li>appendToLocalLog</li>
+<li>if acks=-1, deley producer的 watcher 队列,所有replica等待复制完成<br>完成的标准：<ol>
+<li>highWatermark(HW,已提交)&gt;= 本次生产的最大offset+1</li>
+<li>isr列表副本数量&gt;=minIsr</li>
+</ol>
+</li>
+</ul>
+</li>
+<li>HW(highwatermark)和LEO(log end offset)何时更新?</li>
+</ul>
+<h2 id="Kafka-consume"><a href="#Kafka-consume" class="headerlink" title="Kafka consume"></a>Kafka consume</h2><ul>
+<li>关键配置：<ul>
+<li>group.id</li>
+<li>client.id</li>
+</ul>
+</li>
+<li><p>Consumer FetchRequest(Client consumer)</p>
+<ol>
+<li>查找协调者(ConsumerCoordinator.lookupCoordinator) FIND_COORDINATOR<br>基于groupId hash选择Group metadata topic(consumer_offsets)一个partition所在broker作为协调者</li>
+<li><p>向协调者获取元数据和发起组消费协调</p>
+<ul>
+<li>topic 元数据更新，ConsumerCoordinator.poll()<br>MetadataUpdater 更新相关topics的METADATA,handleCompletedMetadataResponse</li>
+<li>消费组协调(ensureActiveGroup)(JOIN_GROUP|SYNC_GROUP)<ul>
+<li>向协调者coordinator(Kafka Coordinator),发送 JoinGroupRequest</li>
+<li>GroupCoordinator.doJoinGroup|onCompleteJoin</li>
+<li>GroupState:Empty|PreparingRebalance|PreparingRebalance</li>
+<li>DelayedJoin</li>
+<li>onJoinLeader/onJoinFollower<br>  ConsumerGroup 的leader 会拿到所有member metadata,并根据分配策略给consumer分配partition;</li>
+</ul>
+</li>
+</ul>
+</li>
+<li><p>Fetch message</p>
+<ul>
+<li>FetchIsolation</li>
+<li>LogReadResult</li>
+<li>segment.read</li>
+<li>LogOffsetMetadata</li>
+<li>GatheringByteChannel</li>
+<li><strong>FileRecords.writeTo</strong>  </li>
+<li>FetchDataInfo</li>
+<li>DelayedFetch</li>
+<li>KafkaChannel</li>
+<li>TransportLayer</li>
+</ul>
+<p>待续….</p>
+</li>
+<li><p>Rebalance<br>哪几种情况，会导致消费组进入rebalance状态？</p>
+<ul>
+<li>当前处于Stable状态，有新的member JOIN_GROUP,LEAVE_GROUP</li>
+<li>prepareRebalance 合法的previous状态{Stable, CompletingRebalance, Empty}</li>
+<li>方法GroupCoordinator.prepareRebalance<ul>
+<li>delay groupInitialRebalanceDelayMs 等待其它member 直到join超时</li>
+<li>GroupCoordinator.onCompleteJoin</li>
+<li>SYNC_GROUP</li>
+<li>存储分配结果 consumer_offsets</li>
+<li>响应consumer SYNC_GROUP</li>
+<li>Stable</li>
+</ul>
+</li>
+<li><p>Group State</p>
+<ul>
+<li>PreparingRebalance</li>
+<li>CompletingRebalance：Group is awaiting state assignment from the leader</li>
+<li>Stable,状态新的consumer 加入导致元数据变更,所有member rejoin</li>
+<li>Dead</li>
+<li>Empty</li>
+</ul>
+<ul>
+<li>参数</li>
+</ul>
+<ul>
+<li>rebalance_timeout</li>
+<li>group.initial.rebalance.delay.ms</li>
+</ul>
+</li>
+</ul>
+</li>
+</ol>
+</li>
+</ul>
+<ul>
+<li>Follower FetchRequest(REPLICA_ID &gt;=0,表示请求来自follower)<ol>
+<li>updateFollowerLogReadResults<ul>
+<li>lastCaughtUpTimeMs 计算?</li>
+</ul>
+</li>
+<li>maybeExpandIsr, 更新isr(zk,cache)，再计算HW<ul>
+<li>什么情况下会加入/移除isr？<ul>
+<li>加入 replica LEO&gt;=leader HW，更新HW</li>
+<li>移除 宕机、周期性清理isr(lagTime&gt; replicaMaxLagTimeMs)</li>
+</ul>
+</li>
+<li>HW怎么更新？<br>在isr里面或者满足lagTime(now()当对于上一次caughtUpTimeMs的差值)&lt;=replicaLagTimeMaxMs的所有replica的LEO最小值</li>
+</ul>
+</li>
+<li>tryCompleteDelayedRequest</li>
+</ol>
+</li>
+</ul>
+<h2 id="Kafka-Log-Index存储设计"><a href="#Kafka-Log-Index存储设计" class="headerlink" title="Kafka Log/Index存储设计"></a>Kafka Log/Index存储设计</h2><ul>
+<li>Kafka的存储分为日志、索引两类文件，<ul>
+<li>尾部追加Log records</li>
+<li>index<ul>
+<li>OffsetIndex</li>
+<li>TimeIndex</li>
+<li>TransactionIndex</li>
+</ul>
+</li>
+</ul>
+</li>
+<li>IO方式：<ul>
+<li>Log fileChannel</li>
+<li>Index mmap</li>
+<li>check point(检查点)</li>
+<li>LogSegment.recover恢复</li>
+</ul>
+</li>
+<li>影响持久化的配置：<ul>
+<li>segment.ms,default=600000ms,10min，force</li>
+</ul>
+</li>
+<li>影响可靠性的配置：<ul>
+<li>acks</li>
+<li>min.insync.replicas(minIsr)</li>
+<li>replication.factor</li>
+<li>replica.lag.time.max.ms(replicaLagTimeMaxMs)</li>
+<li>unclean.leader.election.enable</li>
+</ul>
+</li>
+<li>Zero copy 设计</li>
+</ul>
+<h2 id="Kafka-Metadata设计"><a href="#Kafka-Metadata设计" class="headerlink" title="Kafka Metadata设计"></a>Kafka Metadata设计</h2><ul>
+<li>zookeeper元数据目录如下：<ul>
+<li>cluster</li>
+<li>controller_epoch</li>
+<li>controller</li>
+<li>brokers<ul>
+<li>ids</li>
+<li>topics<ul>
+<li>topicA<ul>
+<li>partitions<ul>
+<li>0<ul>
+<li>state</li>
+</ul>
+</li>
+<li>…</li>
+<li>5</li>
+</ul>
+</li>
+</ul>
+</li>
+<li>topicB</li>
+</ul>
+</li>
+</ul>
+</li>
+<li>admin</li>
+<li>isr_change_notification</li>
+<li>consumers</li>
+<li>log_dir_event_notification</li>
+<li>latest_producer_id_block</li>
+<li>config</li>
+</ul>
+</li>
+</ul>
+<ul>
+<li><p>Kafka Controller(broker leader)处理元数据变更事件</p>
+<ul>
+<li>BrokerChange<ul>
+<li>对于新broker:恢复分配给它的partition,并触发partition leader election(OfflinePartitionLeaderElectionStrategy)<ul>
+<li>默认选取liveReplica的第一个replica;</li>
+</ul>
+</li>
+<li>UpdateMetadataRequest(UPDATE_METADATA) to live brokers</li>
+<li>LeaderAndIsrRequest(LEADER_AND_ISR)</li>
+</ul>
+</li>
+</ul>
+</li>
+<li><p>Group Metadata(内置主题consumer_offsets,acks=-1)</p>
+<ul>
+<li>Header.Apiversion=0存储在ZK上；以后存储在coordinator上</li>
+<li>FetchOffsets: GroupCoordinator<ul>
+<li>PartitionData</li>
+</ul>
+</li>
+<li>GroupMetadata:<figure class="highlight plain"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br></pre></td><td class="code"><pre><span class="line">&#123;</span><br><span class="line"></span><br><span class="line">    GroupState:&#123;PreparingRebalance|CompletingRebalance|Stable|Dead|Empty&#125;</span><br><span class="line">    leaderId: 消费者中的leader,</span><br><span class="line">    members: consumer group members,</span><br><span class="line">    awaiting join memebers nums:0,</span><br><span class="line">    offsets:消费位置,</span><br><span class="line">    pendingOffsetCommits:未完成的提交的offsets</span><br><span class="line">    pendingTransactionalOffsetCommits:事务未完成的提交的offsets ,</span><br><span class="line">    new membr added:标志是否有新consumer 加入  </span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+<h2 id="Kafka选举"><a href="#Kafka选举" class="headerlink" title="Kafka选举"></a>Kafka选举</h2></li>
+</ul>
+</li>
+</ul>
+<h3 id="Kafka-Controller-选举"><a href="#Kafka-Controller-选举" class="headerlink" title="Kafka Controller 选举"></a>Kafka Controller 选举</h3><p>  利用Zookeeper的选举功能进行选举？使用了如下的path:</p>
+<ul>
+<li>/controller（EPHEMERAL）</li>
+<li>/controller_epoch（PERSISTENT）</li>
+<li>/controller注册watcher,/controller被删除时参与Controller选举</li>
+<li>如果/controller不存在，KafkaController.elect方法</li>
+</ul>
+<h3 id="Kafka-partition-选举"><a href="#Kafka-partition-选举" class="headerlink" title="Kafka partition 选举"></a>Kafka partition 选举</h3><p>  replica宕机或者新增如何选举?</p>
+<ol>
+<li>监听brokers</li>
+<li>获取liveBrokersIds,deadBrokerIds</li>
+<li>deadBrokerIds 上所有的partitions</li>
+<li>对这部分partitions重新选举，选举规则如下<ol>
+<li>对于单个partition,如果它的ISR至少还有一个Replica存活，选举其中一个作为新的leader；否则2</li>
+<li>如果允许(unclean.leader.election.enable=true),从存活的Replica中任选择一个作为Leader；否则leader=-1</li>
+</ol>
+</li>
+</ol>
+<h3 id="Kafka-消费协调"><a href="#Kafka-消费协调" class="headerlink" title="Kafka 消费协调"></a>Kafka 消费协调</h3><p>  Kafka client对PartitionAssignor有三个不同的实现，RangeAssignor和RoundRobinAssignor 都是无状态的；而StickyAssignor会参考上次的分配结果</p>
+<ul>
+<li><p>RangeAssignor(per-topic basis)</p>
+<ul>
+<li>优先分配单个topic</li>
+<li>排前面的consumer会分到更多的partition</li>
+<li><p>分配思路：</p>
+<ol>
+<li>给所有可用的partitions排序</li>
+<li>给所有的consumers排序</li>
+<li>计算每个consumer 平均分配partition数(p)</li>
+<li><p>遍历consumers,一次顺序取出p个partitions分配给当前consumer,循环直到分配完成<br>例如，有如下的协调元数据</p>
+<ul>
+<li>有2个consumers{C0,C1};</li>
+<li>有2个topics{t0,t1};</li>
+<li>t0有3个partitions{t0p0,t0p1,t0p2};t1有3个partitions{t1p0,t1p1,t1p2}</li>
+</ul>
+<p>则partitions 排序的结果是{t0p0,t0p1,t0p2,t1p0,t1p1,t1p2}</p>
+<p>分配结果是：</p>
+<ul>
+<li>C0:[t0p0, t0p1, t1p0, t1p1]</li>
+<li>C1:[t0p2, t1p2]</li>
+</ul>
+</li>
+</ol>
+</li>
+</ul>
+</li>
+<li><p>RoundRobinAssignor</p>
+<ul>
+<li>考虑了consumer 订阅了不同的topics 的情况</li>
+<li><p>分配思路：</p>
+<ol>
+<li>给所有可用的partitions排序</li>
+<li>遍历partitions，对于当前partition,去遍历consumers,如果当前consumer订阅了当前partition,怎分配给当前consumer，否则继续遍历consumer</li>
+<li>假设所有consumers订阅相同topics,仍使用上面的元数据,分配结果如下:<ul>
+<li>C0: [t0p0, t0p2, t1p1]</li>
+<li>C1: [t0p1, t1p0, t1p2]</li>
+</ul>
+</li>
+<li><p>假设consumers订阅不相同topics<br>有如下的元数据：</p>
+<ul>
+<li>consumers{C0,C1,C2}</li>
+<li>topics{t0,t1,t2}</li>
+<li>t0{p0};t1{p0,p1};t2{p0,p1,p2}</li>
+<li>排序后的partitions{t0p0,t1p0,t1p1,t2p0,t2p1,t2p2}</li>
+</ul>
+<p>分配结果：</p>
+<ul>
+<li>C0:[t0p0]</li>
+<li>C1:[t1p0]</li>
+<li>C2:[t1p1, t2p0, t2p1, t2p2]</li>
+</ul>
+</li>
+</ol>
+</li>
+</ul>
+</li>
+<li><p>StickyAssignor</p>
+<ul>
+<li>原则<ol>
+<li>尽量均匀</li>
+<li>尽可能保存原有的分配</li>
+<li>冲突时优先保证均匀</li>
+</ol>
+</li>
+<li>同样分订阅相同和不同两种情况讨论<ol>
+<li>订阅相同</li>
+</ol>
+</li>
+</ul>
+<p><del>实现太复杂</del></p>
+</li>
+</ul>
+<h2 id="Kafka-network"><a href="#Kafka-network" class="headerlink" title="Kafka network"></a>Kafka network</h2><ul>
+<li>SocketServer</li>
+<li>Acceptor</li>
+<li>Processor</li>
+</ul>
+<h2 id="高级特性"><a href="#高级特性" class="headerlink" title="高级特性"></a>高级特性</h2><ul>
+<li><p>Exactly once</p>
+</li>
+<li><p>事务(TransactionManager,read-process-write):transaction_state<br><a href="https://www.confluent.io/blog/transactions-apache-kafka" target="_blank" rel="noopener">https://www.confluent.io/blog/transactions-apache-kafka</a></p>
+<ol>
+<li>lookupCoordinator</li>
+<li>initTransaction<ul>
+<li>INIT_PRODUCER_ID</li>
+</ul>
+</li>
+<li>beginTransaction</li>
+<li>TransactionCoordinator</li>
+<li>WriteTxnMarkersRequest</li>
+<li>EndTransactionMarker</li>
+</ol>
+</li>
+</ul>
+<h2 id="Kafka-限流机制"><a href="#Kafka-限流机制" class="headerlink" title="Kafka 限流机制"></a>Kafka 限流机制</h2><ul>
+<li>Throttle</li>
+</ul>
+<h2 id="Q-amp-A-思考"><a href="#Q-amp-A-思考" class="headerlink" title="Q&amp;A 思考"></a>Q&amp;A 思考</h2><ol>
+<li>Kafka如何做到高可用？(不丢数据)<br>涉及如下几个子问题<ul>
+<li>不同的acks级别是如何保证的？</li>
+<li>partition replicas怎么做选举？</li>
+<li>元数据服务设计是如何去中心化的？</li>
+</ul>
+</li>
+<li>相比与其它MQ有什么优缺点？<ul>
+<li>适用于高吞吐，对可靠性要求不高(少量丢失数据业务可以忍受)的场景(日志、大数据抽取等)</li>
+<li>对电商类低延迟交易,金融级完全可靠存储的场景,没有保障</li>
+<li>单broker Partition 过多会导致性能下降(划分太细)</li>
+<li>产品级监控、消息轨迹、易用性方面不够</li>
+<li>Kafka 单副本刷盘机制？</li>
+</ul>
+</li>
+<li>Kafka会丢消息吗？<br>某些场景下会丢消息？<ul>
+<li>LogSegment.open/Log flush</li>
+</ul>
+</li>
+<li><p>Kafka是CA or AP系统？<br>CA,but P通常都是需要的</p>
+</li>
+<li><p>Kafka 幂等和事务？</p>
+<ul>
+<li>发送幂等(pid+sequence number)</li>
+<li>消费幂等?</li>
+</ul>
+</li>
+<li>Kafka rebalance?</li>
+<li>Kafka zero-copy?数据直接从内核缓冲区直接送入Socket缓冲区<ul>
+<li>mmap</li>
+<li>FileChannel.transferTo</li>
+<li>GatheringByteChannel<img src="/2020/02/09/kafka/zero_copy.jpeg" class=""></li>
+</ul>
+</li>
+<li>Kafka isr 和Raft 多副本的异同？</li>
+</ol>
+</div><div class="tags"><a href="/tags/Kafka/">Kafka</a><a href="/tags/MQ/">MQ</a></div><div class="post-nav"><a class="pre" href="/2020/05/26/busy-thread/">CPU高负载</a><a class="next" href="/2019/12/04/raft/">Raft 算法及实现</a></div></div></div></div><div class="pure-u-1-4 hidden_mid_and_down"><div id="sidebar"><div class="widget"><form class="search-form" action="//www.google.com/search" method="get" accept-charset="utf-8" target="_blank"><input type="text" name="q" maxlength="20" placeholder="Search"/><input type="hidden" name="sitesearch" value="https://rudy2steiner.github.io"/></form></div><div class="widget"><div class="widget-title"><i class="fa fa-folder-o"> 分类</i></div></div><div class="widget"><div class="widget-title"><i class="fa fa-star-o"> 标签</i></div><div class="tagcloud"><a href="/tags/%E7%BA%BF%E7%A8%8B/" style="font-size: 15px;">线程</a> <a href="/tags/CPU-Load/" style="font-size: 15px;">CPU Load</a> <a href="/tags/%E5%B9%B4%E7%BB%88%E6%80%BB%E7%BB%93%EF%BC%8C%E8%B6%8B%E5%8A%BF/" style="font-size: 15px;">年终总结，趋势</a> <a href="/tags/Distributed-theory/" style="font-size: 15px;">Distributed theory</a> <a href="/tags/CAP%E5%AE%9A%E7%90%86/" style="font-size: 15px;">CAP定理</a> <a href="/tags/JVM/" style="font-size: 15px;">JVM</a> <a href="/tags/%E7%B1%BB%E5%8A%A0%E8%BD%BD/" style="font-size: 15px;">类加载</a> <a href="/tags/linux/" style="font-size: 15px;">linux</a> <a href="/tags/filesystem/" style="font-size: 15px;">filesystem</a> <a href="/tags/%E5%8D%9A%E5%AE%A2%E7%BF%BB%E8%AF%91/" style="font-size: 15px;">博客翻译</a> <a href="/tags/K8s/" style="font-size: 15px;">K8s</a> <a href="/tags/%E7%BF%BB%E8%AF%91/" style="font-size: 15px;">翻译</a> <a href="/tags/JDK/" style="font-size: 15px;">JDK</a> <a href="/tags/Kafka/" style="font-size: 15px;">Kafka</a> <a href="/tags/MQ/" style="font-size: 15px;">MQ</a> <a href="/tags/XA/" style="font-size: 15px;">XA</a> <a href="/tags/ZAB/" style="font-size: 15px;">ZAB</a> <a href="/tags/zookeeper/" style="font-size: 15px;">zookeeper</a></div></div><div class="widget"><div class="widget-title"><i class="fa fa-file-o"> 最近文章</i></div><ul class="post-list"><li class="post-list-item"><a class="post-list-link" href="/2021/01/01/2020/">2020 年终总结</a></li><li class="post-list-item"><a class="post-list-link" href="/2020/06/20/how-contribute-kubernetes/">如果你有全职工作，如何为Kubernetes做贡献</a></li><li class="post-list-item"><a class="post-list-link" href="/2020/05/26/busy-thread/">CPU高负载</a></li><li class="post-list-item"><a class="post-list-link" href="/2020/02/09/kafka/">Kafka server 入门</a></li><li class="post-list-item"><a class="post-list-link" href="/2019/12/04/raft/">Raft 算法及实现</a></li><li class="post-list-item"><a class="post-list-link" href="/2019/10/27/zookeeper-starter/">Zookeeper server 入门</a></li><li class="post-list-item"><a class="post-list-link" href="/2019/10/13/Distributed-system/">Distributed System Basics</a></li><li class="post-list-item"><a class="post-list-link" href="/2019/08/09/jdk-update/">JDK 7、8及9中虚拟机的变化</a></li><li class="post-list-item"><a class="post-list-link" href="/2019/05/28/JVM-init/">从Hotspot对象实例化过程，理解类加载</a></li><li class="post-list-item"><a class="post-list-link" href="/2019/03/18/transaction/">Distributed transaction</a></li></ul></div><div class="widget"><div class="widget-title"><i class="fa fa-external-link"> 友情链接</i></div><ul></ul><a href="http://www.example1.com/" title="site-name1" target="_blank">site-name1</a><ul></ul><a href="http://www.example2.com/" title="site-name2" target="_blank">site-name2</a><ul></ul><a href="http://www.example3.com/" title="site-name3" target="_blank">site-name3</a></div></div></div><div class="pure-u-1 pure-u-md-3-4"><div id="footer">Copyright © 2021 <a href="/." rel="nofollow">Rudy Steiner's Blog.</a> Powered by<a rel="nofollow" target="_blank" href="https://hexo.io"> Hexo.</a><a rel="nofollow" target="_blank" href="https://github.com/tufu9441/maupassant-hexo"> Theme</a> by<a rel="nofollow" target="_blank" href="https://github.com/pagecho"> Cho.</a></div></div></div><a class="show" id="rocket" href="#top"></a><script type="text/javascript" src="/js/totop.js?v=0.0.0" async></script><script type="text/javascript" src="//cdn.bootcss.com/fancybox/3.3.5/jquery.fancybox.min.js" async></script><script type="text/javascript" src="/js/fancybox.js?v=0.0.0" async></script><link rel="stylesheet" type="text/css" href="//cdn.bootcss.com/fancybox/3.3.5/jquery.fancybox.min.css"><script type="text/javascript" src="/js/codeblock-resizer.js?v=0.0.0"></script><script type="text/javascript" src="/js/smartresize.js?v=0.0.0"></script></div></body></html>
